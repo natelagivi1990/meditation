@@ -10,39 +10,50 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from aiogram.client.default import DefaultBotProperties
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from datetime import datetime
 
 API_TOKEN = 'твой_токен_сюда'
 
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+scheduler = AsyncIOScheduler()
 
 # === ФАЙЛЫ ===
 STATS_FILE = "stats.json"
 MEDITATIONS_FILE = "meditations.json"
+REMINDERS_FILE = "reminders.json"
 
 # === ДАННЫЕ ===
-user_stats = {}         # user_id -> {"Общее время": 35, "название": 10, ...}
-user_meditations = {}   # user_id -> список медитаций
-user_active_sessions = {}  # user_id -> start_time
-user_uploading = {}     # user_id -> временное хранилище загрузки
+user_stats = {}
+user_meditations = {}
+user_active_sessions = {}
+user_uploading = {}
+user_reminders = {}
 
-# === ЗАГРУЗКА / СОХРАНЕНИЕ ===
+# === ХРАНИЛКИ ===
 def load_json():
-    global user_stats, user_meditations
+    global user_stats, user_meditations, user_reminders
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, "r") as f:
             user_stats = json.load(f)
     if os.path.exists(MEDITATIONS_FILE):
         with open(MEDITATIONS_FILE, "r") as f:
             user_meditations = json.load(f)
+    if os.path.exists(REMINDERS_FILE):
+        with open(REMINDERS_FILE, "r") as f:
+            user_reminders = json.load(f)
 
 def save_json():
     with open(STATS_FILE, "w") as f:
         json.dump(user_stats, f)
     with open(MEDITATIONS_FILE, "w") as f:
         json.dump(user_meditations, f)
+    with open(REMINDERS_FILE, "w") as f:
+        json.dump(user_reminders, f)
 
-# === КЛАВИАТУРА ===
+# === UI ===
 def main_keyboard():
     return ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
         [KeyboardButton(text="🧘 Начать медитацию")],
@@ -50,117 +61,116 @@ def main_keyboard():
         [KeyboardButton(text="📊 Статистика")],
     ])
 
+CATEGORY_OPTIONS = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="Диспенза", callback_data="cat_Диспенза")],
+        [InlineKeyboardButton(text="Дыхательные", callback_data="cat_Дыхательные")],
+    ]
+)
+
 # === СТАРТ ===
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Я бот для медитаций 🧘‍♂️\n\n"
-        "Ты можешь:\n"
-        "— Загружать аудио и видео медитации\n"
-        "— Выбирать категорию\n"
-        "— Смотреть статистику по каждой медитации",
+        "Ты можешь:\n— Загружать медитации\n— Выбирать категорию\n— Устанавливать напоминания",
         reply_markup=main_keyboard()
     )
 
-# === ЗАГРУЗКА МЕДИТАЦИИ ===
+# === ЗАГРУЗКА ===
 @dp.message(F.text == "📥 Загрузить медитацию")
 async def start_upload(message: types.Message):
     user_id = str(message.from_user.id)
     user_uploading[user_id] = {"step": "wait_file"}
-    await message.answer("Отправь мне медитацию (mp3/mp4 файл)")
-
-@dp.message(F.text == "/cancel")
-async def cancel_upload(message: types.Message):
-    user_id = str(message.from_user.id)
-    user_uploading.pop(user_id, None)
-    await message.answer("❌ Загрузка отменена", reply_markup=main_keyboard())
+    await message.answer("Отправь медитацию (mp3/mp4 файл)")
 
 @dp.message(F.audio | F.video | F.document)
-async def handle_media(message: types.Message):
+async def handle_file(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id not in user_uploading or user_uploading[user_id]["step"] != "wait_file":
-        await message.answer("⛔ Нажми сначала 📥 'Загрузить медитацию'")
         return
 
     file = message.audio or message.video or message.document
-    mime = file.mime_type or ""
-    is_audio = "audio" in mime
-    is_video = "video" in mime
-
-    if not (is_audio or is_video):
-        await message.answer("⛔ Только mp3/mp4")
+    if not file.mime_type or ("audio" not in file.mime_type and "video" not in file.mime_type):
+        await message.answer("⛔ Только аудио или видео файлы")
         return
 
-    # Сохраняем инфу
     user_uploading[user_id].update({
         "step": "wait_title",
         "file_id": file.file_id,
         "default_title": file.file_name or "Без названия",
         "duration": file.duration or 0,
-        "type": "audio" if is_audio else "video"
+        "type": "audio" if "audio" in file.mime_type else "video"
     })
+    await message.answer(f"Название файла: {file.file_name}\nНапиши своё название или отправь 'Оставить'")
 
-    await message.answer(
-        f"📎 Файл получен. Название файла: <b>{file.file_name}</b>\n"
-        "Напиши своё название или отправь 'Оставить', чтобы оставить как есть.")
-
-@dp.message(F.text & (lambda msg: msg.from_user.id))
-async def handle_title_or_category(message: types.Message):
+@dp.message(F.text)
+async def handle_upload_steps(message: types.Message):
     user_id = str(message.from_user.id)
+    data = user_uploading.get(user_id)
 
-    # Ввод названия
-    if user_id in user_uploading and user_uploading[user_id]["step"] == "wait_title":
+    if not data:
+        return
+
+    # Название
+    if data["step"] == "wait_title":
         title = message.text.strip()
         if title.lower() == "оставить":
-            title = user_uploading[user_id]["default_title"]
-        user_uploading[user_id]["title"] = title
-        user_uploading[user_id]["step"] = "wait_category"
-        await message.answer("🗂 В какую категорию добавить?\nВыбери: <b>Диспенза</b> или <b>Дыхательные</b>")
+            title = data["default_title"]
+        data["title"] = title
+        data["step"] = "wait_category"
+        await message.answer("Выбери категорию:", reply_markup=CATEGORY_OPTIONS)
         return
 
-    # Выбор категории
-    if user_id in user_uploading and user_uploading[user_id]["step"] == "wait_category":
-        category = message.text.strip().lower()
-        if category not in ["диспенза", "дыхательные"]:
-            await message.answer("⛔ Варианты: Диспенза или Дыхательные")
-            return
+@dp.callback_query(F.data.startswith("cat_"))
+async def choose_category(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    data = user_uploading.get(user_id)
 
-        data = user_uploading[user_id]
-        meditation = {
-            "title": data["title"],
-            "category": category.capitalize(),
-            "file_id": data["file_id"],
-            "duration": data["duration"],
-            "type": data["type"]
-        }
-
-        # Сохраняем
-        user_meditations.setdefault(user_id, []).append(meditation)
-        user_uploading.pop(user_id)
-        save_json()
-
-        await message.answer(f"✅ Медитация <b>{meditation['title']}</b> добавлена в категорию {meditation['category']}", reply_markup=main_keyboard())
+    if not data or data["step"] != "wait_category":
         return
 
-# === ВЫБОР МЕДИТАЦИИ ===
+    category = callback.data.replace("cat_", "")
+    meditation = {
+        "title": data["title"],
+        "category": category,
+        "file_id": data["file_id"],
+        "duration": data["duration"],
+        "type": data["type"]
+    }
+
+    user_meditations.setdefault(user_id, []).append(meditation)
+    user_uploading.pop(user_id)
+    save_json()
+
+    await callback.message.answer(f"✅ Медитация <b>{meditation['title']}</b> добавлена в категорию {category}", reply_markup=main_keyboard())
+    await callback.answer()
+
+# === СТАРТ МЕДИТАЦИИ ===
 @dp.message(F.text == "🧘 Начать медитацию")
-async def choose_meditation(message: types.Message):
-    user_id = str(message.from_user.id)
-    meditations = user_meditations.get(user_id, [])
+async def choose_category_start(message: types.Message):
+    await message.answer("🧘 Выбери категорию медитаций:", reply_markup=CATEGORY_OPTIONS)
+
+@dp.callback_query(F.data.startswith("cat_"))
+async def show_meditations_by_category(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    category = callback.data.replace("cat_", "")
+    meditations = [m for m in user_meditations.get(user_id, []) if m["category"] == category]
 
     if not meditations:
-        await message.answer("Нет загруженных медитаций.")
+        await callback.message.answer("Нет медитаций в этой категории.")
+        await callback.answer()
         return
 
-    await message.answer("🧘‍♀️ Устройся поудобнее. Когда будешь готов — выбери медитацию 🙏")
-
     buttons = [
-        InlineKeyboardButton(text=f"{m['title']} [{m['category']}]", callback_data=f"start_{i}")
-        for i, m in enumerate(meditations)
+        [InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}"),
+         InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}")]
+        for i, m in enumerate(user_meditations[user_id]) if m["category"] == category
     ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[btn] for btn in buttons])
-    await message.answer("📄 Выбери медитацию:", reply_markup=keyboard)
+    await callback.message.answer(f"📄 Медитации категории <b>{category}</b>:", reply_markup=keyboard)
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("start_"))
 async def start_meditation(callback: types.CallbackQuery):
@@ -174,18 +184,18 @@ async def start_meditation(callback: types.CallbackQuery):
     }
 
     if meditation["type"] == "audio":
-        await callback.message.answer_audio(audio=meditation["file_id"], caption=f"▶️ <b>{meditation['title']}</b>")
+        await callback.message.answer_audio(meditation["file_id"], caption=f"▶️ {meditation['title']}")
     else:
-        await callback.message.answer_video(video=meditation["file_id"], caption=f"▶️ <b>{meditation['title']}</b>")
+        await callback.message.answer_video(meditation["file_id"], caption=f"▶️ {meditation['title']}")
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="✅ Завершить медитацию", callback_data="end_meditation")]]
     )
-    await callback.message.answer("Нажми, когда завершишь медитацию 👇", reply_markup=keyboard)
+    await callback.message.answer("Нажми кнопку, когда завершишь 👇", reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(F.data == "end_meditation")
-async def end_meditation(callback: types.CallbackQuery):
+async def end_session(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
     session = user_active_sessions.pop(user_id, None)
 
@@ -193,10 +203,7 @@ async def end_meditation(callback: types.CallbackQuery):
         await callback.message.answer("⛔ Нет активной медитации.")
         return
 
-    end = time.time()
-    duration = int((end - session["start"]) / 60)
-    duration = max(1, duration)
-
+    duration = max(1, int((time.time() - session["start"]) / 60))
     user_stats.setdefault(user_id, {})
     user_stats[user_id]["Общее время"] = user_stats[user_id].get("Общее время", 0) + duration
     user_stats[user_id][session["title"]] = user_stats[user_id].get(session["title"], 0) + duration
@@ -205,9 +212,19 @@ async def end_meditation(callback: types.CallbackQuery):
     await callback.message.answer(f"✅ Медитация завершена. Засчитано: <b>{duration}</b> минут", reply_markup=main_keyboard())
     await callback.answer()
 
+# === УДАЛЕНИЕ ===
+@dp.callback_query(F.data.startswith("delete_"))
+async def delete_meditation(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    index = int(callback.data.replace("delete_", ""))
+    meditation = user_meditations[user_id].pop(index)
+    save_json()
+    await callback.message.answer(f"🗑 Удалено: <b>{meditation['title']}</b>")
+    await callback.answer()
+
 # === СТАТИСТИКА ===
 @dp.message(F.text == "📊 Статистика")
-async def show_stats(message: types.Message):
+async def stats(message: types.Message):
     user_id = str(message.from_user.id)
     stats = user_stats.get(user_id, {})
     if not stats:
@@ -215,14 +232,50 @@ async def show_stats(message: types.Message):
         return
 
     text = "📊 <b>Твоя статистика:</b>\n"
-    for key, value in stats.items():
-        text += f"— {key}: {value} мин\n"
-
+    for name, mins in stats.items():
+        text += f"— {name}: {mins} мин\n"
     await message.answer(text)
+
+# === НАПОМИНАНИЯ ===
+@dp.message(F.text.startswith("/напомни"))
+async def set_reminder(message: types.Message):
+    user_id = str(message.from_user.id)
+    parts = message.text.split()
+    if len(parts) != 2 or ":" not in parts[1]:
+        await message.reply("⏰ Используй так: /напомни 20:30")
+        return
+
+    hour, minute = map(int, parts[1].split(":"))
+    user_reminders[user_id] = {"hour": hour, "minute": minute}
+    save_json()
+
+    scheduler.add_job(
+        send_reminder,
+        CronTrigger(hour=hour, minute=minute),
+        args=[user_id],
+        id=f"reminder_{user_id}",
+        replace_existing=True
+    )
+    await message.reply(f"✅ Буду напоминать каждый день в {hour:02d}:{minute:02d} 🙏")
+
+async def send_reminder(user_id):
+    try:
+        await bot.send_message(user_id, "🌙 Пора медитировать, как и обещал 🙏")
+    except:
+        pass
 
 # === ЗАПУСК ===
 async def main():
     load_json()
+    for user_id, r in user_reminders.items():
+        scheduler.add_job(
+            send_reminder,
+            CronTrigger(hour=r["hour"], minute=r["minute"]),
+            args=[user_id],
+            id=f"reminder_{user_id}",
+            replace_existing=True
+        )
+    scheduler.start()
     print("✅ Бот запущен")
     await dp.start_polling(bot)
 

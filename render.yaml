@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: meditation-bot
+    env: python
+    buildCommand: ""
+    startCommand: "python my_meditation.py"
+    autoDeploy: true
+    region: oregon
+    plan: free

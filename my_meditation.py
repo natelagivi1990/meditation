@@ -62,6 +62,16 @@ user_stats = {}
 user_active_sessions = {}
 
 ###########################################################
+# KEYBOARDS
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📥 Загрузить медитацию")],
+        ],
+        resize_keyboard=True
+    )
+
+
 # JSON LOADING/SAVING
 ###########################################################
 def load_json():
@@ -87,7 +97,98 @@ def save_json():
 # BASIC HANDLERS
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer("Привет! Бот работает через webhook.")
+    user_id = str(message.from_user.id)
+    await message.answer("Добро пожаловать в бот для медитаций!", reply_markup=main_keyboard())
+
+    meditations = user_meditations.get(user_id, [])
+    if meditations:
+        buttons = []
+        for i, m in enumerate(meditations):
+            buttons.append([
+                InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}"),
+                InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}")
+            ])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await message.answer("🧘‍♂️ Выбери медитацию:", reply_markup=kb)
+    else:
+        await message.answer("У тебя ещё нет загруженных медитаций. Используй '📥 Загрузить медитацию'.")
+
+
+# ЗАГРУЗКА МЕДИТАЦИЙ
+@router.message(F.text == "📥 Загрузить медитацию")
+async def upload_menu(message: Message):
+    user_id = str(message.from_user.id)
+    user_uploading[user_id] = {"step": "wait_file"}
+    await message.answer("Отправь медитацию (mp3/mp4 файл)")
+
+@router.message(F.content_type.in_([ContentType.AUDIO, ContentType.VIDEO, ContentType.DOCUMENT]))
+async def on_file_received(message: Message):
+    user_id = str(message.from_user.id)
+    data = user_uploading.get(user_id)
+    if not data or data["step"] != "wait_file":
+        return
+
+    file_id = None
+    file_type = None
+
+    if message.audio:
+        file_id = message.audio.file_id
+        file_type = "audio"
+        default_title = message.audio.file_name or "Unnamed"
+    elif message.video:
+        file_id = message.video.file_id
+        file_type = "video"
+        default_title = message.video.file_name or "Unnamed"
+    elif message.document:
+        fname = message.document.file_name.lower()
+        if fname.endswith(".mp3"):
+            file_type = "audio"
+        elif fname.endswith(".mp4"):
+            file_type = "video"
+        file_id = message.document.file_id
+        default_title = message.document.file_name
+
+    if not file_id or not file_type:
+        await message.answer("Файл не подходит (нужен mp3/mp4).", reply_markup=main_keyboard())
+        return
+
+    user_uploading[user_id].update({
+        "file_id": file_id,
+        "type": file_type,
+        "default_title": default_title,
+        "step": "wait_title"
+    })
+
+    await message.answer(
+        f"Файл получен: <b>{default_title}</b>
+
+Если хочешь переименовать — напиши новое имя.
+Если оставить как есть, просто отправь 1."
+    )
+
+@router.message()
+async def handle_file_rename(message: Message):
+    user_id = str(message.from_user.id)
+    data = user_uploading.get(user_id)
+    if not data or data.get("step") != "wait_title":
+        return
+
+    if message.text.strip() == "1":
+        title = data["default_title"]
+    else:
+        title = message.text.strip()
+
+    entry = {
+        "title": title,
+        "file_id": data["file_id"],
+        "type": data["type"]
+    }
+
+    user_meditations.setdefault(user_id, []).append(entry)
+    save_json()
+    user_uploading.pop(user_id, None)
+
+    await message.answer(f"✅ Медитация <b>{title}</b> успешно загружена!", reply_markup=main_keyboard())
 
 
 # WEBHOOK SERVER SETUP

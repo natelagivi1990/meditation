@@ -1,4 +1,4 @@
 --upgrade pip
-aiogram>=3.0.0
-aiohttp>=3.8.0
-apscheduler
+aiogram==3.3.0
+aiohttp==3.9.3
+apscheduler==3.10.4

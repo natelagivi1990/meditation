@@ -45,7 +45,12 @@ WEBHOOK_PORT = int(os.environ.get("PORT", 8000))
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+from aiogram import Router
+
+router = Router()
+
 dp = Dispatcher()
+dp.include_router(router)
 scheduler = AsyncIOScheduler()
 
 STATS_FILE = "stats.json"
@@ -79,6 +84,12 @@ def save_json():
         json.dump(user_stats, f, ensure_ascii=False)
 
 ###########################################################
+# BASIC HANDLERS
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer("Привет! Бот работает через webhook.")
+
+
 # WEBHOOK SERVER SETUP
 ###########################################################
 async def handle_webhook(request):

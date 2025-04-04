@@ -163,7 +163,8 @@ async def on_file_received(message: Message):
         f"Файл получен: <b>{default_title}</b>
 
 Если хочешь переименовать — напиши новое имя.
-Если оставить как есть, просто отправь 1."
+Если оставить как есть, просто отправь 1.",
+        parse_mode=ParseMode.HTML
     )
 
 @router.message()

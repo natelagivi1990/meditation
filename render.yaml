@@ -1,9 +1,13 @@
 services:
   - type: web
-    name: meditation-bot
+    name: telegram-meditation-bot
     env: python
     buildCommand: ""
-    startCommand: "python my_meditation.py"
-    autoDeploy: true
-    region: oregon
-    plan: free
+    startCommand: python my_meditation.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: RENDER_EXTERNAL_HOSTNAME
+        fromService:
+          type: web
+          name: telegram-meditation-bot

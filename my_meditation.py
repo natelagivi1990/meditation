@@ -376,3 +376,6 @@ class TestScheduler(unittest.TestCase):
             self.assertIsNotNone(s)
         except Exception as e:
             self.fail(f"Scheduler initialization failed unexpectedly: {e}")
+            @app.route('/ping')
+def ping():
+    return 'OK', 200

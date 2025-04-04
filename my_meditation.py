@@ -6,7 +6,6 @@ try:
     import ssl
 except ImportError:
     print("[ERROR] ssl module is not available in this environment. aiogram requires ssl.")
-    print("Please install or enable the ssl module, or use a Python environment that includes it.")
     sys.exit(1)
 
 # --- Check multiprocessing module ---
@@ -14,7 +13,6 @@ try:
     import multiprocessing
 except ImportError:
     print("[ERROR] _multiprocessing module is missing. APScheduler may require it for ProcessPoolExecutor.")
-    print("Please install or enable the multiprocessing module, or use a Python environment that includes it.")
     sys.exit(1)
 
 import asyncio
@@ -31,8 +29,11 @@ from aiogram.types import (
     Message, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ContentType
+    ContentType,
+    Update
 )
+from aiohttp import web
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -40,6 +41,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 API_TOKEN = "7787463545:AAH6M-_sYua5CsIgr3L1eq1hTuQfWGIynk4"
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_PORT = int(os.environ.get("PORT", 8000))
+WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -48,10 +52,10 @@ scheduler = AsyncIOScheduler()
 STATS_FILE = "stats.json"
 MEDITATIONS_FILE = "meditations.json"
 
-user_meditations = {}   # {user_id: [ {title, file_id, type}, ... ]}
-user_uploading = {}     # {user_id: {step, file_id, default_title, type}}
-user_stats = {}         # {user_id: { 'Общее время':X, 'Медитация1':Y, ... }}
-user_active_sessions = {} # {user_id: {start_time, title}}
+user_meditations = {}
+user_uploading = {}
+user_stats = {}
+user_active_sessions = {}
 
 ###########################################################
 # JSON LOADING/SAVING
@@ -76,29 +80,37 @@ def save_json():
         json.dump(user_stats, f, ensure_ascii=False)
 
 ###########################################################
-# KEEP-ALIVE PING
+# WEBHOOK SERVER SETUP
 ###########################################################
-async def keep_alive():
-    while True:
-        try:
-            await bot.get_me()  # простой запрос к Telegram API
-            logging.info("✅ Keep-alive ping successful")
-        except Exception as e:
-            logging.warning(f"⚠️ Keep-alive ping failed: {e}")
-        await asyncio.sleep(30)  # каждые 30 секунд
+async def handle_webhook(request):
+    body = await request.text()
+    update = Update.model_validate_json(body)
+    await dp.feed_update(bot, update)
+    return web.Response()
 
-###########################################################
-# MAIN
-###########################################################
 async def main():
     load_json()
-    print("✅ Запущен бот (aiogram 3.x).")
-    asyncio.create_task(keep_alive())  # запускаем keep-alive
-    await dp.start_polling(bot)
+    print("✅ Запущен бот (aiogram 3.x) через webhook.")
+
+    app = web.Application()
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
+
+    # Устанавливаем webhook
+    await bot.set_webhook(WEBHOOK_URL)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", WEBHOOK_PORT)
+    await site.start()
+
+    # Бесконечное ожидание (не завершать main)
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("❌ Бот остановлен")
 
 ###########################################################
 # TESTS

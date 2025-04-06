@@ -32,6 +32,7 @@ from aiogram.types import (
     Update
 )
 from aiohttp import web
+from aiogram.client.default import DefaultBotProperties
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ WEBHOOK_PATH = "/webhook"
 WEBHOOK_PORT = int(os.environ.get("PORT", 8000))
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 router = Router()
 dp = Dispatcher(bot=bot)
 dp.include_router(router)
@@ -60,6 +61,7 @@ def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📥 Загрузить медитацию")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🏠 Меню")]
         ],
         resize_keyboard=True
     )
@@ -89,6 +91,7 @@ def save_json():
 ###########################################################
 # BASIC HANDLERS
 @router.message(CommandStart())
+@router.message(F.text == "🏠 Меню")
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
     await message.answer("Добро пожаловать в бот для медитаций!", reply_markup=main_keyboard())
@@ -99,8 +102,8 @@ async def cmd_start(message: Message):
         for i, m in enumerate(meditations):
             buttons.append([
                 InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}"),
-                InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}")
             ])
+            buttons[-1].append(InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}"))
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await message.answer("🧘‍♂️ Выбери медитацию:", reply_markup=kb)
     else:
@@ -182,6 +185,25 @@ async def handle_file_rename(message: Message):
     user_uploading.pop(user_id, None)
 
     await message.answer(f"✅ Медитация <b>{title}</b> успешно загружена!", reply_markup=main_keyboard())
+
+# СТАТИСТИКА
+@router.message(F.text == "📊 Статистика")
+async def show_stats(message: Message):
+    user_id = str(message.from_user.id)
+    stats = user_stats.get(user_id, {})
+    if not stats:
+        await message.answer("Пока нет статистики.")
+        return
+
+    overall = stats.get("Общее время", 0)
+    text = "📊 <b>Твоя статистика</b>:\n"
+    for t, val in stats.items():
+        if t == "Общее время":
+            continue
+        text += f"— {t}: {val} мин\n"
+    text += f"\nВсего (по всем медитациям): {overall} мин"
+
+    await message.answer(text, parse_mode=ParseMode.HTML)
 
 
 # WEBHOOK SERVER SETUP

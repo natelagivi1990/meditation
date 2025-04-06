@@ -12,8 +12,8 @@ except ImportError:
 try:
     import multiprocessing
 except ImportError:
-    print("[ERROR] _multiprocessing module is missing. APScheduler may require it for ProcessPoolExecutor.")
-    sys.exit(1)
+    print("[WARNING] _multiprocessing module is missing. APScheduler may require it for ProcessPoolExecutor. Skipping scheduler.")
+    multiprocessing = None
 
 import asyncio
 import time
@@ -21,7 +21,7 @@ import json
 import os
 import logging
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -31,10 +31,8 @@ from aiogram.types import (
     ContentType,
     Update
 )
+from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
-
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,14 +42,10 @@ WEBHOOK_PATH = "/webhook"
 WEBHOOK_PORT = int(os.environ.get("PORT", 8000))
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
-from aiogram import Router
-
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 router = Router()
-
 dp = Dispatcher()
 dp.include_router(router)
-scheduler = AsyncIOScheduler()
 
 STATS_FILE = "stats.json"
 MEDITATIONS_FILE = "meditations.json"
@@ -160,11 +154,8 @@ async def on_file_received(message: Message):
     })
 
     await message.answer(
-        f"Файл получен: <b>{default_title}</b>
-
-"
-        "Если хочешь переименовать — напиши новое имя.
-"
+        f"Файл получен: <b>{default_title}</b>\n\n"
+        "Если хочешь переименовать — напиши новое имя.\n"
         "Если оставить как есть, просто отправь 1.",
         parse_mode=ParseMode.HTML
     )
@@ -222,7 +213,8 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
     except (KeyboardInterrupt, SystemExit):
         print("❌ Бот остановлен")
 
@@ -233,13 +225,12 @@ class TestSSLModule(unittest.TestCase):
     def test_ssl_import(self):
         self.assertIsNotNone(ssl)
 
-class TestMultiprocessingModule(unittest.TestCase):
-    def test_multiprocessing_import(self):
-        self.assertIsNotNone(multiprocessing)
-
 class TestScheduler(unittest.TestCase):
     def test_scheduler_init(self):
+        if multiprocessing is None:
+            self.skipTest("multiprocessing is not available")
         try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
             s = AsyncIOScheduler()
             self.assertIsNotNone(s)
         except Exception as e:

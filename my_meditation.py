@@ -32,7 +32,6 @@ from aiogram.types import (
     Update
 )
 from aiohttp import web
-from aiogram.client.session.base import DefaultBotProperties
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ WEBHOOK_PATH = "/webhook"
 WEBHOOK_PORT = int(os.environ.get("PORT", 8000))
 WEBHOOK_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
-bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 router = Router()
 dp = Dispatcher(bot=bot)
 dp.include_router(router)

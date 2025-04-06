@@ -32,7 +32,7 @@ from aiogram.types import (
     Update
 )
 from aiohttp import web
-from aiogram.client.default import DefaultBotProperties
+from aiogram.client.bot import DefaultBotProperties
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

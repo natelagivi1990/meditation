@@ -100,9 +100,11 @@ async def cmd_start(message: Message):
         buttons = []
         for i, m in enumerate(meditations):
             buttons.append([
-                InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}"),
+                InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}")
             ])
-            buttons[-1].append(InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}"))
+            buttons.append([
+                InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}")
+            ])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await message.answer("🧘‍♂️ Выбери медитацию:", reply_markup=kb)
     else:

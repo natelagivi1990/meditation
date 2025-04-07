@@ -59,12 +59,11 @@ user_active_sessions = {}
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📥 Загрузить медитацию")],
+            [KeyboardButton(text="📥 Загрузить"), KeyboardButton(text="🗑 Удалить")],
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🏠 Меню")]
         ],
         resize_keyboard=True
     )
-
 
 # JSON LOADING/SAVING
 ###########################################################
@@ -102,17 +101,44 @@ async def cmd_start(message: Message):
             buttons.append([
                 InlineKeyboardButton(text="▶️ " + m["title"], callback_data=f"start_{i}")
             ])
-            buttons.append([
-                InlineKeyboardButton(text="🗑", callback_data=f"delete_{i}")
-            ])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await message.answer("🧘‍♂️ Выбери медитацию:", reply_markup=kb)
     else:
-        await message.answer("У тебя ещё нет загруженных медитаций. Используй '📥 Загрузить медитацию'.")
+        await message.answer("У тебя ещё нет загруженных медитаций. Используй '📥 Загрузить'.")
+
+@router.message(F.text == "🗑 Удалить")
+async def show_deletion_menu(message: Message):
+    user_id = str(message.from_user.id)
+    meditations = user_meditations.get(user_id, [])
+    if not meditations:
+        await message.answer("Нет загруженных медитаций для удаления.")
+        return
+
+    buttons = []
+    for i, m in enumerate(meditations):
+        buttons.append([
+            InlineKeyboardButton(text=f"🗑 {m['title']}", callback_data=f"delete_{i}")
+        ])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("Выберите медитацию для удаления:", reply_markup=kb)
+
+# УДАЛЕНИЕ МЕДИТАЦИЙ
+@router.callback_query(F.data.startswith("delete_"))
+async def delete_meditation(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    index = int(callback.data.replace("delete_", ""))
+    if user_id not in user_meditations or index >= len(user_meditations[user_id]):
+        await callback.answer("Ошибка удаления.")
+        return
+
+    deleted = user_meditations[user_id].pop(index)
+    save_json()
+    await callback.message.answer(f"❌ Удалено: <b>{deleted['title']}</b>", parse_mode=ParseMode.HTML)
+    await callback.answer()
 
 
 # ЗАГРУЗКА МЕДИТАЦИЙ
-@router.message(F.text == "📥 Загрузить медитацию")
+@router.message(F.text == "📥 Загрузить")
 async def upload_menu(message: Message):
     user_id = str(message.from_user.id)
     user_uploading[user_id] = {"step": "wait_file"}
